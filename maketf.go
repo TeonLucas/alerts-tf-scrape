@@ -31,9 +31,6 @@ func (data *LocalData) walkPolicies() {
 	}
 	sort.Ints(policyIds)
 
-	// DEBUG
-	policyIds = []int{policyIds[0]}
-
 	// Traverse policies in order
 	log.Printf("Walking %d policies to generate Terraform", len(policyIds))
 	for _, policyId = range policyIds {
@@ -51,9 +48,6 @@ func (data *LocalData) walkPolicies() {
 			j++
 		}
 		sort.Ints(conditionIds)
-
-		// DEBUG
-		conditionIds = []int{conditionIds[0]}
 
 		// Traverse conditions in order
 		for _, conditionId = range conditionIds {
