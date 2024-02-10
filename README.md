@@ -3,7 +3,9 @@ Generates Terraform for all NR1 alert policies and conditions in a given account
 
 
 ## To build
-```go build```
+```
+go build
+```
 
 ## To configure
 First you need to set two environment variables
