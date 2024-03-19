@@ -14,9 +14,9 @@ import (
 const (
 	GraphQlEndpoint    = "https://api.newrelic.com/graphql"
 	PolicyQuery        = `{actor {account(id: %s) {alerts {policiesSearch {policies {id incidentPreference name accountId} nextCursor}}}}}`
-	PolicyQueryNext    = `query($cursor: String!) {actor {account(id: %s) {alerts {policiesSearch {policies(cursor: $cursor) {id incidentPreference name accountId} nextCursor}}}}}`
+	PolicyQueryNext    = `query($cursor: String!) {actor {account(id: %s) {alerts {policiesSearch(cursor: $cursor) {policies {id incidentPreference name accountId} nextCursor}}}}}`
 	ConditionQuery     = `query EntitySearchQuery {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %s", options: {tagFilter: ["id","policyId"]}) {results {entities {guid accountId type name tags {key values}} nextCursor}}}}`
-	ConditionQueryNext = `query EntitySearchQuery($cursor: String!) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %s", options: {tagFilter: "["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
+	ConditionQueryNext = `query EntitySearchQuery($cursor: String!) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %s", options: {tagFilter: ["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
 )
 
 // Alert entities
@@ -48,14 +48,14 @@ type Entity struct {
 
 // GraphQl request and result formats
 type GraphQlPayload struct {
-	Query     string      `json:"query"`
-	Variables interface{} `json:"variables"`
-}
-type GraphQlCursor struct {
-	Cursor string `json:"cursor"`
+	Query     string `json:"query"`
+	Variables struct {
+		Cursor string `json:"cursor"`
+	} `json:"variables"`
 }
 type GraphQlResult struct {
-	Data struct {
+	Errors []interface{} `json:"errors"`
+	Data   struct {
 		Actor struct {
 			EntitySearch struct {
 				Results struct {
@@ -137,6 +137,9 @@ func (data *LocalData) getPolicies() {
 		if err != nil {
 			log.Printf("Error parsing GraphQl policies result: %v", err)
 		}
+		if len(graphQlResult.Errors) > 0 {
+			log.Printf("Errors with GraphQl query: %v", graphQlResult.Errors)
+		}
 		policiesSearch := graphQlResult.Data.Actor.Account.Alerts.PoliciesSearch
 
 		// store policies
@@ -156,8 +159,9 @@ func (data *LocalData) getPolicies() {
 
 		// get next page of results
 		gQuery.Query = fmt.Sprintf(PolicyQueryNext, data.AccountId)
-		gQuery.Variables = GraphQlCursor{Cursor: fmt.Sprintf("%s", policiesSearch.NextCursor)}
+		gQuery.Variables.Cursor = fmt.Sprintf("%s", policiesSearch.NextCursor)
 	}
+	log.Printf("Found %d policies", len(data.PolicyMap))
 }
 
 func parseCondition(entity Entity) (condition Condition, err error) {
@@ -195,6 +199,7 @@ func (data *LocalData) getConditions() {
 	var gQuery GraphQlPayload
 	var j []byte
 	var err error
+	var conditionCount int
 
 	// Get conditions, story in Policy map by guid
 	gQuery.Query = fmt.Sprintf(ConditionQuery, data.AccountId)
@@ -212,6 +217,9 @@ func (data *LocalData) getConditions() {
 		err = json.Unmarshal(b, &graphQlResult)
 		if err != nil {
 			log.Printf("Error parsing GraphQl conditions result: %v", err)
+		}
+		if len(graphQlResult.Errors) > 0 {
+			log.Printf("Errors with GraphQl query: %v", graphQlResult.Errors)
 		}
 		conditionsSearch := graphQlResult.Data.Actor.EntitySearch.Results
 
@@ -244,6 +252,7 @@ func (data *LocalData) getConditions() {
 			}
 			policy.ConditionMap[id] = condition
 			data.PolicyMap[policyId] = policy
+			conditionCount++
 		}
 		if conditionsSearch.NextCursor == nil {
 			break
@@ -251,8 +260,9 @@ func (data *LocalData) getConditions() {
 
 		// get next page of results
 		gQuery.Query = fmt.Sprintf(ConditionQueryNext, data.AccountId)
-		gQuery.Variables = GraphQlCursor{Cursor: fmt.Sprintf("%s", conditionsSearch.NextCursor)}
+		gQuery.Variables.Cursor = fmt.Sprintf("%s", conditionsSearch.NextCursor)
 	}
+	log.Printf("Found %d conditions", conditionCount)
 }
 
 func (data *LocalData) makeClient() {
