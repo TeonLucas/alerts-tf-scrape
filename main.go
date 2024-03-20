@@ -5,11 +5,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 )
 
 type LocalData struct {
 	AccountId      string
 	UserKey        string
+	Concurrent     int
 	Client         *http.Client
 	GraphQlHeaders []string
 	CDPctx         context.Context
@@ -23,8 +25,21 @@ func main() {
 
 	// Get required settings
 	data := LocalData{
-		AccountId: os.Getenv("NEW_RELIC_ACCOUNT"),
-		UserKey:   os.Getenv("NEW_RELIC_USER_KEY"),
+		AccountId:  os.Getenv("NEW_RELIC_ACCOUNT"),
+		UserKey:    os.Getenv("NEW_RELIC_USER_KEY"),
+		Concurrent: 1,
+	}
+	concurrent := os.Getenv("CONCURRENT")
+	if len(concurrent) > 0 {
+		data.Concurrent, err = strconv.Atoi(concurrent)
+		if err != nil {
+			log.Printf("Invalid env var CONCURRENT setting: %v", err)
+			os.Exit(0)
+		}
+		if data.Concurrent > 20 {
+			data.Concurrent = 20
+			log.Printf("Limiting env var CONCURRENT to 20", err)
+		}
 	}
 	if len(data.AccountId) == 0 {
 		log.Printf("Please set env var NEW_RELIC_ACCOUNT")
