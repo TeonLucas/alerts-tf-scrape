@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/target"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -49,7 +52,7 @@ func doLogin() chromedp.Tasks {
 
 		// Ask for user input
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			fmt.Println("New Relic login page, please log in")
+			log.Println("New Relic login page, please log in")
 			time.Sleep(3 * time.Second)
 			return nil
 		}),
@@ -125,8 +128,88 @@ func (policy *Policy) doScrapeCondition(name, guid string) chromedp.Tasks {
 	}
 }
 
-func (data *LocalData) scrapeConditionTF(policy *Policy, condition Condition) (err error) {
-	// Scrape condition and update policy TF
-	err = chromedp.Run(data.CDPctx, policy.doScrapeCondition(condition.Name, condition.Guid))
-	return
+func (data *LocalData) concurrentScrape(policyIds []int) {
+	// make channels
+	outputChan := make(chan bool, data.Concurrent)
+	inputChan := make(chan int, len(policyIds)+data.Concurrent)
+
+	for _, id := range policyIds {
+		inputChan <- id
+	}
+	for i := 0; i < data.Concurrent; i++ {
+		inputChan <- 0
+	}
+
+	// Start concurrent scrapers
+	for i := 1; i <= data.Concurrent; i++ {
+		log.Printf("Opening new Chrome window %d\n", i)
+		var scraperCtx context.Context
+		var scraperCancel context.CancelFunc
+		go func() {
+			var err error
+			var res *runtime.RemoteObject
+			if err = chromedp.Run(data.CDPctx, chromedp.Evaluate(`window.open("about:blank", "", "resizable,scrollbars,status")`, &res)); err != nil {
+				log.Printf("Error opening new Chrome window %d: %v\n", i, err)
+			}
+
+			var targets []*target.Info
+			targets, err = chromedp.Targets(data.CDPctx)
+			if err != nil {
+				log.Printf("Error accessing new Chrome window %d targets: %v\n", i, err)
+			}
+
+			for x, t := range targets {
+				if !t.Attached {
+					scraperCtx, scraperCancel = chromedp.NewContext(data.CDPctx, chromedp.WithTargetID(t.TargetID))
+					fmt.Printf("New Chrome window #%d, target #%d\n", i, x+1)
+					defer scraperCancel()
+					break
+				}
+			}
+
+			for {
+				var policyId int
+				policyId = <-inputChan
+				if policyId == 0 {
+					// exit concurrent
+					outputChan <- true
+					break
+				}
+
+				var conditionId, j int
+				var policy Policy
+
+				// Start the TF code with the policy definiton
+				policy = data.PolicyMap[policyId]
+				policy.makePolicyTF()
+
+				// Sort condition ids
+				conditionIds := make([]int, len(policy.ConditionMap))
+				for conditionId = range policy.ConditionMap {
+					conditionIds[j] = conditionId
+					j++
+				}
+				sort.Ints(conditionIds)
+
+				// Traverse conditions in order
+				for _, conditionId = range conditionIds {
+					condition := policy.ConditionMap[conditionId]
+
+					// Do scrape
+					err = chromedp.Run(scraperCtx, policy.doScrapeCondition(condition.Name, condition.Guid))
+					if err != nil {
+						log.Println("Scrape condition TF error:", err)
+					}
+				}
+				data.PolicyMap[policyId] = policy
+				policy.writeTF()
+			}
+		}()
+	}
+
+	// Complete scrapers
+	for i := 1; i <= data.Concurrent; i++ {
+		<-outputChan
+		log.Printf("Completed scrape on Chrome window %d", i)
+	}
 }

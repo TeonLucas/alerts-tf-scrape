@@ -21,7 +21,6 @@ func (policy *Policy) makePolicyTF() {
 // Walk the policies to scrape each condition Terraform code
 func (data *LocalData) walkPolicies() {
 	var policyId, i int
-	var err error
 
 	// Sort policy ids
 	policyIds := make([]int, len(data.PolicyMap))
@@ -31,38 +30,10 @@ func (data *LocalData) walkPolicies() {
 	}
 	sort.Ints(policyIds)
 
-	// Traverse policies in order
+	// Traverse policies concurrently
 	log.Printf("Walking %d policies to generate Terraform", len(policyIds))
-	for _, policyId = range policyIds {
-		var conditionId, j int
-		var policy Policy
-
-		// Start the TF code with the policy definiton
-		policy = data.PolicyMap[policyId]
-		policy.makePolicyTF()
-
-		// Sort condition ids
-		conditionIds := make([]int, len(policy.ConditionMap))
-		for conditionId = range policy.ConditionMap {
-			conditionIds[j] = conditionId
-			j++
-		}
-		sort.Ints(conditionIds)
-
-		// Traverse conditions in order
-		for _, conditionId = range conditionIds {
-			condition := policy.ConditionMap[conditionId]
-
-			// Do scrape
-			data.scrapeConditionTF(&policy, condition)
-			if err != nil {
-				log.Println("Scrape condition TF error:", err)
-			}
-		}
-		data.PolicyMap[policyId] = policy
-
-		policy.writeTF()
-	}
+	log.Printf("Using concurrency=%d", data.Concurrent)
+	data.concurrentScrape(policyIds)
 }
 
 func (policy *Policy) writeTF() {

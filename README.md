@@ -8,13 +8,20 @@ go build
 ```
 
 ## To configure
-First you need to set two environment variables
+First you need to set two environment variables:
 ```
 export NEW_RELIC_ACCOUNT=YOUR_TARGET_ACCOUNT_ID
 export NEW_RELIC_USER_KEY=YOUR_USER_API_KEY
 ```
 
 ## To run
+By default the scraper will run without concurrency, using a single Chrome window.
+You can increase this with the `CONCURRENT` environment variable.  For example:
+```
+export CONCURRENT=8
+```
+The max setting is 20 based on API limits.
+
 Then run as follows
 ```
 ./alerts-tf-scrape
@@ -40,3 +47,7 @@ New Relic login page, please log in
 2024/02/09 18:50:58 Writing alert policy terraform to policy_773015.tf
 2024/02/09 18:50:59 Done
 ```
+
+## Troubleshooting
+When running higher concurrency, at times the browser may get Chrome error 5.
+Refresh the window with command-R and it should continue.
