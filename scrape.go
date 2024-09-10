@@ -3,12 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/chromedp/cdproto/runtime"
-	"github.com/chromedp/cdproto/target"
 	"log"
-	"sort"
 	"time"
 
+	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
 
@@ -176,24 +175,13 @@ func (data *LocalData) concurrentScrape() {
 					break
 				}
 
-				var conditionId, j int
-				var policy Policy
-
 				// Start the TF code with the policy definiton
-				policy = data.PolicyMap[policyId]
+				policy := data.PolicyMap[policyId]
 				policy.makePolicyTF()
 
-				// Sort condition ids
-				conditionIds := make([]int, len(policy.ConditionMap))
-				for conditionId = range policy.ConditionMap {
-					conditionIds[j] = conditionId
-					j++
-				}
-				sort.Ints(conditionIds)
-
 				// Traverse conditions in order
-				for _, conditionId = range conditionIds {
-					condition := policy.ConditionMap[conditionId]
+				for _, conditionId := range policy.ConditionIds {
+					condition := data.ConditionMap[conditionId]
 
 					// Do scrape
 					err = chromedp.Run(scraperCtx, policy.doScrapeCondition(condition.Name, condition.Guid))
