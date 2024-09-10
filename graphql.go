@@ -236,7 +236,7 @@ func (data *LocalData) getConditionDetail(condition *Condition) {
 		log.Printf("Errors with GraphQl query: %v", graphQlResult.Errors)
 		return
 	}
-	condition.Query = fmt.Sprintf("%v", graphQlResult.Data.Actor.Account.Alerts.NrqlCondition)
+	condition.Query = fmt.Sprintf("%s", graphQlResult.Data.Actor.Account.Alerts.NrqlCondition)
 }
 
 func (data *LocalData) getConditions() {
