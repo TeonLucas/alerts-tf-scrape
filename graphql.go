@@ -68,7 +68,7 @@ type GraphQlResult struct {
 			} `json:"entitySearch"`
 			Account struct {
 				Alerts struct {
-					NrqlCondition  interface{} `json:"nrqlCondition"`
+					NrqlCondition  NrqlCondition `json:"nrqlCondition"`
 					PoliciesSearch struct {
 						Policies   []Policy    `json:"policies"`
 						NextCursor interface{} `json:"nextCursor"`
@@ -77,6 +77,13 @@ type GraphQlResult struct {
 			} `json:"account"`
 		} `json:"actor"`
 	} `json:"data"`
+}
+type NrqlCondition struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+	Nrql struct {
+		Query string `json:"query"`
+	} `json:"nrql"`
 }
 type Error struct {
 	Message string `json:"message"`
@@ -236,7 +243,7 @@ func (data *LocalData) getConditionDetail(condition *Condition) {
 		log.Printf("Errors with GraphQl query: %v", graphQlResult.Errors)
 		return
 	}
-	condition.Query = fmt.Sprintf("%s", graphQlResult.Data.Actor.Account.Alerts.NrqlCondition)
+	condition.Query = graphQlResult.Data.Actor.Account.Alerts.NrqlCondition.Nrql.Query
 }
 
 func (data *LocalData) getConditions() {
