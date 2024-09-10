@@ -48,6 +48,12 @@ New Relic login page, please log in
 2024/02/09 18:50:59 Done
 ```
 
+## CSV Mode
+You can also skip the browser scraping and Terraform, if you only want a CSV of alert conditions.
+```
+./alerts-tf-scrape -csv
+```
+
 ## Troubleshooting
 When running higher concurrency, at times the browser may get Chrome error 5.
 Refresh the window with command-R and it should continue.
