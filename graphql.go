@@ -6,17 +6,17 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	GraphQlEndpoint    = "https://api.newrelic.com/graphql"
-	PolicyQuery        = `{actor {account(id: %s) {alerts {policiesSearch {policies {id incidentPreference name accountId} nextCursor}}}}}`
-	PolicyQueryNext    = `query($cursor: String!) {actor {account(id: %s) {alerts {policiesSearch(cursor: $cursor) {policies {id incidentPreference name accountId} nextCursor}}}}}`
-	ConditionQuery     = `query EntitySearchQuery {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %s", options: {tagFilter: ["id","policyId"]}) {results {entities {guid accountId type name tags {key values}} nextCursor}}}}`
-	ConditionQueryNext = `query EntitySearchQuery($cursor: String!) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %s", options: {tagFilter: ["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
+	GraphQlEndpoint = "https://api.newrelic.com/graphql"
+	PolicyQuery     = `query($cursor: String) {actor {account(id: %s) {alerts {policiesSearch(cursor: $cursor) {policies {id incidentPreference name accountId} nextCursor}}}}}`
+	ConditionQuery  = `query EntitySearchQuery($cursor: String) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %s", options: {tagFilter: ["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
+	DetailQuery     = `query getConditionDetail($accountId: Int!, $conditionId: ID!) {actor {account(id: $accountId) {alerts {nrqlCondition(id: $conditionId) {nrql {query} name id}}}}}`
 )
 
 // Alert entities
@@ -34,6 +34,7 @@ type Condition struct {
 	Id        string `json:"id"`
 	Name      string `json:"name"`
 	Guid      string `json:"guid"`
+	Query     string
 }
 type Entity struct {
 	AccountId int    `json:"accountId"`
@@ -50,11 +51,13 @@ type Entity struct {
 type GraphQlPayload struct {
 	Query     string `json:"query"`
 	Variables struct {
-		Cursor string `json:"cursor"`
+		AccountId   int    `json:"accountId,omitempty"`
+		ConditionId string `json:"conditionId,omitempty"`
+		Cursor      string `json:"cursor,omitempty"`
 	} `json:"variables"`
 }
 type GraphQlResult struct {
-	Errors []interface{} `json:"errors"`
+	Errors []Error `json:"errors"`
 	Data   struct {
 		Actor struct {
 			EntitySearch struct {
@@ -65,6 +68,7 @@ type GraphQlResult struct {
 			} `json:"entitySearch"`
 			Account struct {
 				Alerts struct {
+					NrqlCondition  interface{} `json:"nrqlCondition"`
 					PoliciesSearch struct {
 						Policies   []Policy    `json:"policies"`
 						NextCursor interface{} `json:"nextCursor"`
@@ -73,6 +77,9 @@ type GraphQlResult struct {
 			} `json:"account"`
 		} `json:"actor"`
 	} `json:"data"`
+}
+type Error struct {
+	Message string `json:"message"`
 }
 
 // Make API request with error retry
@@ -158,9 +165,14 @@ func (data *LocalData) getPolicies() {
 		}
 
 		// get next page of results
-		gQuery.Query = fmt.Sprintf(PolicyQueryNext, data.AccountId)
 		gQuery.Variables.Cursor = fmt.Sprintf("%s", policiesSearch.NextCursor)
 	}
+
+	// Sort policy ids
+	for policyId := range data.PolicyMap {
+		data.PolicyIds = append(data.PolicyIds, policyId)
+	}
+	sort.Ints(data.PolicyIds)
 	log.Printf("Found %d policies", len(data.PolicyMap))
 }
 
@@ -193,6 +205,38 @@ func parseCondition(entity Entity) (condition Condition, err error) {
 		}
 	}
 	return
+}
+
+func (data *LocalData) getConditionDetail(condition *Condition) {
+	var gQuery GraphQlPayload
+	var j []byte
+	var err error
+
+	gQuery.Query = DetailQuery
+	gQuery.Variables.ConditionId = condition.Id
+	gQuery.Variables.AccountId = condition.AccountId
+	// make query payload
+	j, err = json.Marshal(gQuery)
+	if err != nil {
+		log.Printf("Error creating GraphQl condition detail query: %v", err)
+		return
+	}
+	b := retryQuery(data.Client, "POST", GraphQlEndpoint, string(j), data.GraphQlHeaders)
+	// parse results
+	var graphQlResult GraphQlResult
+	err = json.Unmarshal(b, &graphQlResult)
+	if err != nil {
+		log.Printf("Error parsing GraphQl condition detail result: %v", err)
+		return
+	}
+	if len(graphQlResult.Errors) > 0 {
+		if graphQlResult.Errors[0].Message == "Not Found" {
+			return
+		}
+		log.Printf("Errors with GraphQl query: %v", graphQlResult.Errors)
+		return
+	}
+	condition.Query = fmt.Sprintf("%v", graphQlResult.Data.Actor.Account.Alerts.NrqlCondition)
 }
 
 func (data *LocalData) getConditions() {
@@ -235,6 +279,7 @@ func (data *LocalData) getConditions() {
 				log.Printf("Error parsing condition: %v", err)
 				continue
 			}
+			data.getConditionDetail(&condition)
 			policyId, err = strconv.Atoi(condition.PolicyId)
 			if err != nil {
 				log.Printf("Error parsing condition policyId: %v (condition %+v)", err, condition)
@@ -259,7 +304,6 @@ func (data *LocalData) getConditions() {
 		}
 
 		// get next page of results
-		gQuery.Query = fmt.Sprintf(ConditionQueryNext, data.AccountId)
 		gQuery.Variables.Cursor = fmt.Sprintf("%s", conditionsSearch.NextCursor)
 	}
 	log.Printf("Found %d conditions", conditionCount)
