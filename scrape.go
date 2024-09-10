@@ -128,12 +128,12 @@ func (policy *Policy) doScrapeCondition(name, guid string) chromedp.Tasks {
 	}
 }
 
-func (data *LocalData) concurrentScrape(policyIds []int) {
+func (data *LocalData) concurrentScrape() {
 	// make channels
 	outputChan := make(chan bool, data.Concurrent)
-	inputChan := make(chan int, len(policyIds)+data.Concurrent)
+	inputChan := make(chan int, len(data.PolicyIds)+data.Concurrent)
 
-	for _, id := range policyIds {
+	for _, id := range data.PolicyIds {
 		inputChan <- id
 	}
 	for i := 0; i < data.Concurrent; i++ {

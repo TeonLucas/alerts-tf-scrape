@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sort"
 )
 
 // Generate the policy Terraform code
@@ -20,20 +19,11 @@ func (policy *Policy) makePolicyTF() {
 
 // Walk the policies to scrape each condition Terraform code
 func (data *LocalData) walkPolicies() {
-	var policyId, i int
-
-	// Sort policy ids
-	policyIds := make([]int, len(data.PolicyMap))
-	for policyId = range data.PolicyMap {
-		policyIds[i] = policyId
-		i++
-	}
-	sort.Ints(policyIds)
 
 	// Traverse policies concurrently
-	log.Printf("Walking %d policies to generate Terraform", len(policyIds))
+	log.Printf("Walking %d policies to generate Terraform", len(data.PolicyIds))
 	log.Printf("Using concurrency=%d", data.Concurrent)
-	data.concurrentScrape(policyIds)
+	data.concurrentScrape()
 }
 
 func (policy *Policy) writeTF() {

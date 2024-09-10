@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -12,10 +13,12 @@ type LocalData struct {
 	AccountId      string
 	UserKey        string
 	Concurrent     int
+	CSVonly        bool
 	Client         *http.Client
 	GraphQlHeaders []string
 	CDPctx         context.Context
 	CDPcancel      context.CancelFunc
+	PolicyIds      []int
 	PolicyMap      map[int]Policy
 	Dump           string
 }
@@ -29,6 +32,15 @@ func main() {
 		UserKey:    os.Getenv("NEW_RELIC_USER_KEY"),
 		Concurrent: 1,
 	}
+
+	// Get commandline options
+	flag.BoolVar(&data.CSVonly, "csv", false, "Generate CSV mode")
+	flag.Parse()
+	if data.CSVonly {
+		log.Printf("CSV mode enabled")
+	}
+
+	// Validate settings
 	concurrent := os.Getenv("CONCURRENT")
 	if len(concurrent) > 0 {
 		data.Concurrent, err = strconv.Atoi(concurrent)
@@ -56,6 +68,11 @@ func main() {
 
 	// Get conditions for these
 	data.getConditions()
+
+	if data.CSVonly {
+		data.writeCSV()
+		os.Exit(0)
+	}
 
 	// Login for scraper
 	err = data.startChromeAndLogin()
