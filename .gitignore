@@ -17,6 +17,7 @@ alerts-tf-scrape
 
 # Script ouptput
 *.tf
+*.csv
 
 # Go workspace file
 go.work

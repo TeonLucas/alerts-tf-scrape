@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sort"
 )
 
 func (data *LocalData) writeCSV() {
 	var rows [][]string
 
-	outputCSV := fmt.Sprintf("alerts_%s.csv", data.AccountId)
+	outputCSV := fmt.Sprintf("alerts_%d.csv", data.AccountId)
 	f, err := os.Create(outputCSV)
 	if err != nil {
 		log.Printf("Error opening csv: %v", err)
@@ -31,13 +30,8 @@ func (data *LocalData) writeCSV() {
 		if !ok {
 			continue
 		}
-		var conditionIds []int
-		for conditionId := range policy.ConditionMap {
-			conditionIds = append(conditionIds, conditionId)
-		}
-		sort.Ints(conditionIds)
-		for _, conditionId := range conditionIds {
-			condition, ok := policy.ConditionMap[conditionId]
+		for _, conditionId := range policy.ConditionIds {
+			condition, ok := data.ConditionMap[conditionId]
 			if !ok {
 				continue
 			}

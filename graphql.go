@@ -14,8 +14,9 @@ import (
 
 const (
 	GraphQlEndpoint = "https://api.newrelic.com/graphql"
-	PolicyQuery     = `query($cursor: String) {actor {account(id: %s) {alerts {policiesSearch(cursor: $cursor) {policies {id incidentPreference name accountId} nextCursor}}}}}`
-	ConditionQuery  = `query EntitySearchQuery($cursor: String) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %s", options: {tagFilter: ["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
+	GrQl_Parallel   = 8
+	PolicyQuery     = `query($cursor: String) {actor {account(id: %d) {alerts {policiesSearch(cursor: $cursor) {policies {id incidentPreference name accountId} nextCursor}}}}}`
+	ConditionQuery  = `query EntitySearchQuery($cursor: String) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %d", options: {tagFilter: ["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
 	DetailQuery     = `query getConditionDetail($accountId: Int!, $conditionId: ID!) {actor {account(id: $accountId) {alerts {nrqlCondition(id: $conditionId) {nrql {query} name id}}}}}`
 )
 
@@ -25,7 +26,7 @@ type Policy struct {
 	Id                 string `json:"id"`
 	Name               string `json:"name"`
 	IncidentPreference string `json:"IncidentPreference"`
-	ConditionMap       map[int]Condition
+	ConditionIds       []int
 	TF                 string
 }
 type Condition struct {
@@ -45,6 +46,10 @@ type Entity struct {
 		Values []string `json:"values"`
 	} `json:"tags"`
 	Type string `json:"type"`
+}
+type Output struct {
+	ConditionId int
+	Query       string
 }
 
 // GraphQl request and result formats
@@ -164,7 +169,6 @@ func (data *LocalData) getPolicies() {
 				log.Printf("Error parsing policy Id: %v (policy %+v)", err, policy)
 				continue
 			}
-			policy.ConditionMap = make(map[int]Condition)
 			data.PolicyMap[id] = policy
 		}
 		if policiesSearch.NextCursor == nil {
@@ -214,36 +218,89 @@ func parseCondition(entity Entity) (condition Condition, err error) {
 	return
 }
 
-func (data *LocalData) getConditionDetail(condition *Condition) {
-	var gQuery GraphQlPayload
-	var j []byte
-	var err error
+func (data *LocalData) getConditionDetails() {
+	inputChan := make(chan int, len(data.ConditionMap)+GrQl_Parallel)
+	outputChan := make(chan Output, len(data.ConditionMap)+GrQl_Parallel)
 
-	gQuery.Query = DetailQuery
-	gQuery.Variables.ConditionId = condition.Id
-	gQuery.Variables.AccountId = condition.AccountId
-	// make query payload
-	j, err = json.Marshal(gQuery)
-	if err != nil {
-		log.Printf("Error creating GraphQl condition detail query: %v", err)
-		return
-	}
-	b := retryQuery(data.Client, "POST", GraphQlEndpoint, string(j), data.GraphQlHeaders)
-	// parse results
-	var graphQlResult GraphQlResult
-	err = json.Unmarshal(b, &graphQlResult)
-	if err != nil {
-		log.Printf("Error parsing GraphQl condition detail result: %v", err)
-		return
-	}
-	if len(graphQlResult.Errors) > 0 {
-		if graphQlResult.Errors[0].Message == "Not Found" {
-			return
+	// Load conditions into channel
+	go func() {
+		for _, policyId := range data.PolicyIds {
+			policy := data.PolicyMap[policyId]
+			// Sort condition ids
+			sort.Ints(policy.ConditionIds)
+			for _, id := range policy.ConditionIds {
+				inputChan <- id
+			}
 		}
-		log.Printf("Errors with GraphQl query: %v", graphQlResult.Errors)
-		return
+		for n := 0; n < GrQl_Parallel; n++ {
+			inputChan <- 0
+		}
+	}()
+
+	for i := 1; i <= GrQl_Parallel; i++ {
+		log.Printf("GraphQL - starting condition detail requestor #%d", i)
+		go func() {
+			var gQuery GraphQlPayload
+			var j []byte
+			var err error
+			gQuery.Query = DetailQuery
+			client := &http.Client{}
+			for {
+				conditionId := <-inputChan
+				if conditionId == 0 {
+					outputChan <- Output{}
+					break
+				}
+				gQuery.Variables.ConditionId = fmt.Sprintf("%d", conditionId)
+				gQuery.Variables.AccountId = data.AccountId
+				// make query payload
+				j, err = json.Marshal(gQuery)
+				if err != nil {
+					log.Printf("Error creating GraphQl condition detail query: %v", err)
+					continue
+				}
+				b := retryQuery(client, "POST", GraphQlEndpoint, string(j), data.GraphQlHeaders)
+				// parse results
+				var graphQlResult GraphQlResult
+				err = json.Unmarshal(b, &graphQlResult)
+				if err != nil {
+					log.Printf("Error parsing GraphQl condition detail result: %v", err)
+					continue
+				}
+				if len(graphQlResult.Errors) > 0 {
+					if graphQlResult.Errors[0].Message == "Not Found" {
+						continue
+					}
+					log.Printf("Errors with GraphQl query: %v", graphQlResult.Errors)
+					continue
+				}
+				outputChan <- Output{
+					ConditionId: conditionId,
+					Query:       graphQlResult.Data.Actor.Account.Alerts.NrqlCondition.Nrql.Query,
+				}
+			}
+		}()
 	}
-	condition.Query = graphQlResult.Data.Actor.Account.Alerts.NrqlCondition.Nrql.Query
+
+	queries := 0
+	for i := 0; i < GrQl_Parallel; i++ {
+		for {
+			output := <-outputChan
+			if output.ConditionId == 0 {
+				log.Printf("GraphQL - ending condition detail requestor #%d", i+1)
+				break
+			}
+			condition, ok := data.ConditionMap[output.ConditionId]
+			if !ok {
+				log.Printf("GraphQL condition detail, no condition for id %d", output.ConditionId)
+				continue
+			}
+			condition.Query = output.Query
+			data.ConditionMap[output.ConditionId] = condition
+			queries++
+		}
+	}
+	log.Printf("GraphQL - finished condition detail requesters, %d nrql conditions found", queries)
 }
 
 func (data *LocalData) getConditions() {
@@ -286,7 +343,6 @@ func (data *LocalData) getConditions() {
 				log.Printf("Error parsing condition: %v", err)
 				continue
 			}
-			data.getConditionDetail(&condition)
 			policyId, err = strconv.Atoi(condition.PolicyId)
 			if err != nil {
 				log.Printf("Error parsing condition policyId: %v (condition %+v)", err, condition)
@@ -302,14 +358,14 @@ func (data *LocalData) getConditions() {
 				log.Printf("Error parsing condition Id: %v (condition %+v)", err, condition)
 				continue
 			}
-			policy.ConditionMap[id] = condition
+			data.ConditionMap[id] = condition
+			policy.ConditionIds = append(policy.ConditionIds, id)
 			data.PolicyMap[policyId] = policy
 			conditionCount++
 		}
 		if conditionsSearch.NextCursor == nil {
 			break
 		}
-
 		// get next page of results
 		gQuery.Variables.Cursor = fmt.Sprintf("%s", conditionsSearch.NextCursor)
 	}
@@ -320,4 +376,5 @@ func (data *LocalData) makeClient() {
 	data.Client = &http.Client{}
 	data.GraphQlHeaders = []string{"Content-Type:application/json", "API-Key:" + data.UserKey}
 	data.PolicyMap = make(map[int]Policy)
+	data.ConditionMap = make(map[int]Condition)
 }

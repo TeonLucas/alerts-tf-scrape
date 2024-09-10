@@ -10,7 +10,7 @@ import (
 )
 
 type LocalData struct {
-	AccountId      string
+	AccountId      int
 	UserKey        string
 	Concurrent     int
 	CSVonly        bool
@@ -20,6 +20,7 @@ type LocalData struct {
 	CDPcancel      context.CancelFunc
 	PolicyIds      []int
 	PolicyMap      map[int]Policy
+	ConditionMap   map[int]Condition
 	Dump           string
 }
 
@@ -28,7 +29,6 @@ func main() {
 
 	// Get required settings
 	data := LocalData{
-		AccountId:  os.Getenv("NEW_RELIC_ACCOUNT"),
 		UserKey:    os.Getenv("NEW_RELIC_USER_KEY"),
 		Concurrent: 1,
 	}
@@ -53,13 +53,19 @@ func main() {
 			log.Printf("Limiting env var CONCURRENT to 20", err)
 		}
 	}
-	if len(data.AccountId) == 0 {
+	accountId := os.Getenv("NEW_RELIC_ACCOUNT")
+	if len(accountId) == 0 {
 		log.Printf("Please set env var NEW_RELIC_ACCOUNT")
-		os.Exit(0)
+		os.Exit(1)
+	}
+	data.AccountId, err = strconv.Atoi(accountId)
+	if err != nil {
+		log.Printf("Please set env var NEW_RELIC_ACCOUNT to an integer")
+		os.Exit(1)
 	}
 	if len(data.UserKey) == 0 {
 		log.Printf("Please set env var NEW_RELIC_USER_KEY")
-		os.Exit(0)
+		os.Exit(1)
 	}
 	data.makeClient()
 
@@ -68,6 +74,7 @@ func main() {
 
 	// Get conditions for these
 	data.getConditions()
+	data.getConditionDetails()
 
 	if data.CSVonly {
 		data.writeCSV()
