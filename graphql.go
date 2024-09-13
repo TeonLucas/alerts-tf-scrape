@@ -14,7 +14,7 @@ import (
 
 const (
 	GraphQlEndpoint = "https://api.newrelic.com/graphql"
-	GrQl_Parallel   = 8
+	GrQl_Parallel   = 10
 	PolicyQuery     = `query($cursor: String) {actor {account(id: %d) {alerts {policiesSearch(cursor: $cursor) {policies {id incidentPreference name accountId} nextCursor}}}}}`
 	ConditionQuery  = `query EntitySearchQuery($cursor: String) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %d", options: {tagFilter: ["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
 	DetailQuery     = `query getConditionDetail($accountId: Int!, $conditionId: ID!) {actor {account(id: $accountId) {alerts {nrqlCondition(id: $conditionId) {nrql {query} name id}}}}}`
