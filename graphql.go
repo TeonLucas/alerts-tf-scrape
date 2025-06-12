@@ -16,8 +16,10 @@ const (
 	GraphQlEndpoint = "https://api.newrelic.com/graphql"
 	GrQl_Parallel   = 10
 	PolicyQuery     = `query($cursor: String) {actor {account(id: %d) {alerts {policiesSearch(cursor: $cursor) {policies {id incidentPreference name accountId} nextCursor}}}}}`
-	ConditionQuery  = `query EntitySearchQuery($cursor: String) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %d", options: {tagFilter: ["id","policyId"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
+	ConditionQuery  = `query EntitySearchQuery($cursor: String) {actor {entitySearch(query: "domain = 'AIOPS' AND type = 'CONDITION' AND accountId = %d", options: {tagFilter: ["id","policyId","enabled","type"]}) {results(cursor: $cursor) {entities {guid accountId type name tags {key values}} nextCursor}}}}`
 	DetailQuery     = `query getConditionDetail($accountId: Int!, $conditionId: ID!) {actor {account(id: $accountId) {alerts {nrqlCondition(id: $conditionId) {nrql {query} name id}}}}}`
+	DisableBQuery   = `mutation disableNrqlBaselineCondition($conditionId: ID!, $accountId: Int!) {alertsNrqlConditionBaselineUpdate(accountId: $accountId, condition: {enabled: false}, id: $conditionId) {enabled name}}`
+	DisableSQuery   = `mutation disableNrqlStaticCondition($conditionId: ID!, $accountId: Int!) {alertsNrqlConditionStaticUpdate(accountId: $accountId, condition: {enabled: false}, id: $conditionId) {enabled name}}`
 )
 
 // Alert entities
@@ -35,7 +37,19 @@ type Condition struct {
 	Id        string `json:"id"`
 	Name      string `json:"name"`
 	Guid      string `json:"guid"`
+	Type      string
 	Query     string
+	Enabled   bool
+	Critical  Threshold
+	Warning   Threshold
+	Fill      string
+	AggWindow int
+}
+type Threshold struct {
+	Operator             string
+	Threshold            int
+	ThresholdDuration    int
+	thresholdOccurrences string
 }
 type Entity struct {
 	AccountId int    `json:"accountId"`
@@ -81,6 +95,12 @@ type GraphQlResult struct {
 				} `json:"alerts"`
 			} `json:"account"`
 		} `json:"actor"`
+		DisableB struct {
+			Enabled bool `json:"enabled"`
+		} `json:"alertsNrqlConditionBaselineUpdate"`
+		DisableS struct {
+			Enabled bool `json:"enabled"`
+		} `json:"alertsNrqlConditionStaticUpdate"`
 	} `json:"data"`
 }
 type NrqlCondition struct {
@@ -195,7 +215,7 @@ func parseCondition(entity Entity) (condition Condition, err error) {
 		err = fmt.Errorf("invalid condition type: %+v", entity)
 		return
 	}
-	if len(entity.Tags) != 2 {
+	if len(entity.Tags) != 4 {
 		err = fmt.Errorf("invalid condition tags: %+v", entity)
 		return
 	}
@@ -213,6 +233,22 @@ func parseCondition(entity Entity) (condition Condition, err error) {
 				return
 			}
 			condition.Id = tag.Values[0]
+		}
+		if tag.Key == "type" {
+			if len(tag.Values) != 1 {
+				err = fmt.Errorf("invalid condition entity Type: %+v", entity)
+				return
+			}
+			condition.Type = tag.Values[0]
+		}
+		if tag.Key == "enabled" {
+			if len(tag.Values) != 1 {
+				err = fmt.Errorf("invalid condition entity Enabled: %+v", entity)
+				return
+			}
+			if tag.Values[0] == "true" {
+				condition.Enabled = true
+			}
 		}
 	}
 	return
@@ -282,6 +318,13 @@ func (data *LocalData) getConditionDetails() {
 		}()
 	}
 
+	// Setup for disable option
+	var gQuery GraphQlPayload
+	var j []byte
+	var err error
+	client := &http.Client{}
+	var disableCount int
+
 	queries := 0
 	for i := 0; i < GrQl_Parallel; i++ {
 		for {
@@ -296,11 +339,51 @@ func (data *LocalData) getConditionDetails() {
 				continue
 			}
 			condition.Query = output.Query
+
+			// disable option
+			if data.Disable && condition.Type[0:4] == "NRQL" && condition.Enabled {
+				if condition.Type == "NRQL Query" {
+					gQuery.Query = DisableSQuery
+				} else {
+					gQuery.Query = DisableBQuery
+				}
+				gQuery.Variables.AccountId = data.AccountId
+				gQuery.Variables.ConditionId = condition.Id
+				j, err = json.Marshal(gQuery)
+				if err != nil {
+					log.Printf("Error creating GraphQl condition.id %s disable mutation: %v", condition.Id, err)
+				} else {
+					b := retryQuery(client, "POST", GraphQlEndpoint, string(j), data.GraphQlHeaders)
+					// parse results
+					var graphQlResult GraphQlResult
+					err = json.Unmarshal(b, &graphQlResult)
+					if err != nil {
+						log.Printf("Error parsing GraphQl condition.id %s disable mutation result: %v", condition.Id, err)
+					} else {
+						if len(graphQlResult.Errors) > 0 {
+							log.Printf("Errors with GraphQl condition.id %s disable mutation: %v", condition.Id, graphQlResult.Errors)
+						} else {
+							if condition.Type == "NRQL Query" {
+								condition.Enabled = graphQlResult.Data.DisableS.Enabled
+							} else {
+								condition.Enabled = graphQlResult.Data.DisableB.Enabled
+							}
+						}
+						if !condition.Enabled {
+							disableCount++
+						}
+					}
+				}
+			}
+
 			data.ConditionMap[output.ConditionId] = condition
 			queries++
 		}
 	}
 	log.Printf("GraphQL - finished condition detail requesters, %d nrql conditions found", queries)
+	if data.Disable {
+		log.Printf("GraphQL - disabled %d nrql conditions", disableCount)
+	}
 }
 
 func (data *LocalData) getConditions() {
