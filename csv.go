@@ -24,6 +24,8 @@ func (data *LocalData) writeCSV() {
 		"policyName",
 		"entityGuid",
 		"nrqlQuery",
+		"type",
+		"enabled",
 	})
 	for _, policyId := range data.PolicyIds {
 		policy, ok := data.PolicyMap[policyId]
@@ -42,6 +44,8 @@ func (data *LocalData) writeCSV() {
 				policy.Name,
 				condition.Guid,
 				condition.Query,
+				condition.Type,
+				fmt.Sprintf("%t", condition.Enabled),
 			})
 		}
 	}

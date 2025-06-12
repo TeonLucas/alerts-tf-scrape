@@ -14,6 +14,7 @@ type LocalData struct {
 	UserKey        string
 	Concurrent     int
 	CSVonly        bool
+	Disable        bool
 	Client         *http.Client
 	GraphQlHeaders []string
 	CDPctx         context.Context
@@ -35,9 +36,13 @@ func main() {
 
 	// Get commandline options
 	flag.BoolVar(&data.CSVonly, "csv", false, "Generate CSV mode")
+	flag.BoolVar(&data.Disable, "disable", false, "Disable all NRQL conditions")
 	flag.Parse()
 	if data.CSVonly {
 		log.Printf("CSV mode enabled")
+	}
+	if data.Disable {
+		log.Printf("Disable all NRQL conditions")
 	}
 
 	// Validate settings
